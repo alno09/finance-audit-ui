@@ -3,8 +3,10 @@
 import {
   ChangeEvent,
   FormEvent,
+  useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -49,6 +51,17 @@ type DocumentResult = {
   } | null;
 };
 
+type UploadQuota = {
+  limit: number;
+  remaining: number;
+  resetAtMs: number | null;
+};
+
+type UploadErrorBody = {
+  message?: unknown;
+  retryAfter?: unknown;
+};
+
 const TERMINAL_STATUSES = [
   'APPROVED',
   'NEEDS_REVIEW',
@@ -77,11 +90,29 @@ export default function Home() {
   const [result, setResult] = useState<DocumentResult | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [quota, setQuota] = useState<UploadQuota | null>(null);
+  const [quotaLockUntilMs, setQuotaLockUntilMs] = useState<number | null>(null);
+  const [quotaExhausted, setQuotaExhausted] = useState(false);
+  const uploadInFlightRef = useRef(false);
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-  const canUpload = Boolean(file && apiUrl && !uploading);
+  const canUpload = Boolean(file && apiUrl && !uploading && !quotaExhausted);
   const isProcessing =
     Boolean(result) && !TERMINAL_STATUSES.includes(result?.status ?? '');
+
+  const clearExpiredQuotaLock = useCallback(() => {
+    const resetAtMs = quotaLockUntilMs;
+
+    if (resetAtMs === null || resetAtMs > Date.now()) {
+      return;
+    }
+
+    setQuotaLockUntilMs(null);
+    setQuotaExhausted(false);
+    setQuota((currentQuota) =>
+      currentQuota?.resetAtMs === resetAtMs ? null : currentQuota,
+    );
+  }, [quotaLockUntilMs]);
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     setFile(event.target.files?.[0] ?? null);
@@ -97,11 +128,16 @@ export default function Home() {
       return;
     }
 
+    if (uploadInFlightRef.current || quotaExhausted) {
+      return;
+    }
+
     if (!apiUrl) {
       setError('NEXT_PUBLIC_API_URL is not configured.');
       return;
     }
 
+    uploadInFlightRef.current = true;
     setUploading(true);
     setError(null);
     setResult(null);
@@ -115,10 +151,47 @@ export default function Home() {
         body: formData,
       });
 
-      if (!response.ok) {
-        const data = await response.json();
+      const nextQuota = readUploadQuota(response.headers);
+      if (nextQuota) {
+        setQuota(nextQuota);
 
-        throw new Error(data.message ?? 'Upload failed');
+        if (
+          nextQuota.remaining === 0 &&
+          nextQuota.resetAtMs &&
+          nextQuota.resetAtMs > Date.now()
+        ) {
+          setQuotaLockUntilMs(nextQuota.resetAtMs);
+          setQuotaExhausted(true);
+        } else {
+          setQuotaLockUntilMs(null);
+          setQuotaExhausted(false);
+        }
+      }
+
+      if (!response.ok) {
+        const data = await readUploadErrorBody(response);
+
+        if (response.status === 429) {
+          const resetAtMs =
+            nextQuota?.resetAtMs ??
+            readResetFromRetryAfter(response.headers) ??
+            readResetFromRetryAfterBody(data);
+
+          if (resetAtMs && resetAtMs > Date.now()) {
+            setQuotaLockUntilMs(resetAtMs);
+            setQuotaExhausted(true);
+          }
+
+          setError(formatQuotaError(resetAtMs));
+          return;
+        }
+
+        if (response.status === 503) {
+          setError('Uploads are temporarily unavailable. Please try again later.');
+          return;
+        }
+
+        throw new Error(readErrorMessage(data) ?? 'Upload failed');
       }
 
       const document = await response.json();
@@ -126,9 +199,27 @@ export default function Home() {
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Upload failed');
     } finally {
+      uploadInFlightRef.current = false;
       setUploading(false);
     }
   }
+
+  useEffect(() => {
+    if (!quotaLockUntilMs) {
+      return;
+    }
+
+    const delayMs = Math.max(0, quotaLockUntilMs - Date.now());
+    const timeoutId = setTimeout(clearExpiredQuotaLock, delayMs);
+    const handleFocus = () => clearExpiredQuotaLock();
+
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      clearTimeout(timeoutId);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [clearExpiredQuotaLock, quotaLockUntilMs]);
 
   useEffect(() => {
     if (!documentId || !apiUrl) {
@@ -230,6 +321,25 @@ export default function Home() {
                     className="sr-only"
                   />
                 </label>
+
+                {quota && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
+                    {quota.remaining} of {quota.limit} upload attempts remaining today
+                  </div>
+                )}
+
+                {quotaExhausted && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900">
+                    <p className="font-semibold">
+                      Daily upload limit reached for your network.
+                    </p>
+                    {quotaLockUntilMs && (
+                      <p className="mt-1">
+                        Resets {formatResetTime(quotaLockUntilMs)}.
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <button
                   type="submit"
@@ -530,4 +640,85 @@ function formatFileSize(size: number) {
   }
 
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function readUploadQuota(headers: Headers): UploadQuota | null {
+  const limit = readNonNegativeIntegerHeader(headers, 'X-Upload-Limit');
+  const remaining = readNonNegativeIntegerHeader(headers, 'X-Upload-Remaining');
+  const resetAtSeconds = readNonNegativeIntegerHeader(headers, 'X-Upload-Reset');
+
+  if (limit === null || remaining === null) {
+    return null;
+  }
+
+  return {
+    limit,
+    remaining,
+    resetAtMs: resetAtSeconds === null ? null : resetAtSeconds * 1000,
+  };
+}
+
+function readNonNegativeIntegerHeader(headers: Headers, name: string) {
+  return readNonNegativeInteger(headers.get(name));
+}
+
+function readNonNegativeInteger(value: unknown) {
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    return null;
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function readResetFromRetryAfter(headers: Headers) {
+  const retryAfterSeconds = readNonNegativeIntegerHeader(headers, 'Retry-After');
+
+  if (retryAfterSeconds === null) {
+    return null;
+  }
+
+  return Date.now() + retryAfterSeconds * 1000;
+}
+
+function readResetFromRetryAfterBody(body: UploadErrorBody | null) {
+  const retryAfterSeconds = readNonNegativeInteger(body?.retryAfter);
+
+  if (retryAfterSeconds === null) {
+    return null;
+  }
+
+  return Date.now() + retryAfterSeconds * 1000;
+}
+
+async function readUploadErrorBody(response: Response) {
+  try {
+    return (await response.json()) as UploadErrorBody;
+  } catch {
+    return null;
+  }
+}
+
+function readErrorMessage(body: UploadErrorBody | null) {
+  return typeof body?.message === 'string' ? body.message : null;
+}
+
+function formatQuotaError(resetAtMs: number | null) {
+  if (!resetAtMs) {
+    return 'Daily upload limit reached for your network.';
+  }
+
+  return `Daily upload limit reached for your network. Resets ${formatResetTime(resetAtMs)}.`;
+}
+
+function formatResetTime(resetAtMs: number) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(resetAtMs));
 }
