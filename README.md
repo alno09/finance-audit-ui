@@ -4,7 +4,7 @@ FinanceAudit is a Next.js UI for uploading invoice PDFs and reviewing extracted
 financial data, line items, and audit findings.
 
 If you want to understand the architecture, visit this repo:
-[https://github.com/alno09/finance-audit-engine](https://github.com/alno09/finance-audit-engine).
+[Finance Audit Engine](https://github.com/alno09/finance-audit-engine).
 
 Since you are here, here's how you can run it.
 
