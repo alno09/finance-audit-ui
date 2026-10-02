@@ -1,69 +1,533 @@
-import Image from "next/image";
+'use client';
+
+import {
+  ChangeEvent,
+  FormEvent,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
+
+type AuditFinding = {
+  id: string;
+  type: string;
+  severity: string;
+  message: string;
+  expectedValue: string | null;
+  actualValue: string | null;
+};
+
+type LineItem = {
+  id: string;
+  description: string;
+  quantity: string | null;
+  unitPrice: string | null;
+  total: string | null;
+};
+
+type DocumentResult = {
+  id: string;
+  filename: string;
+  status: string;
+  errorMessage: string | null;
+
+  invoice: {
+    invoiceNumber: string | null;
+    vendorName: string | null;
+    customerName: string | null;
+    currency: string;
+    subtotal: string | null;
+    tax: string | null;
+    total: string | null;
+
+    lineItems: LineItem[];
+
+    audit: {
+      status: string;
+      findings: AuditFinding[];
+    } | null;
+  } | null;
+};
+
+const TERMINAL_STATUSES = [
+  'APPROVED',
+  'NEEDS_REVIEW',
+  'EXTRACTION_FAILED',
+  'AUDIT_FAILED',
+];
+
+const STATUS_STYLES: Record<string, string> = {
+  APPROVED: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  NEEDS_REVIEW: 'border-amber-200 bg-amber-50 text-amber-800',
+  EXTRACTION_FAILED: 'border-rose-200 bg-rose-50 text-rose-700',
+  AUDIT_FAILED: 'border-rose-200 bg-rose-50 text-rose-700',
+  PROCESSING: 'border-sky-200 bg-sky-50 text-sky-700',
+  UPLOADED: 'border-sky-200 bg-sky-50 text-sky-700',
+};
+
+const SEVERITY_STYLES: Record<string, string> = {
+  HIGH: 'border-rose-200 bg-rose-50 text-rose-700',
+  MEDIUM: 'border-amber-200 bg-amber-50 text-amber-800',
+  LOW: 'border-slate-200 bg-slate-50 text-slate-600',
+};
 
 export default function Home() {
+  const [file, setFile] = useState<File | null>(null);
+  const [documentId, setDocumentId] = useState<string | null>(null);
+  const [result, setResult] = useState<DocumentResult | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  const canUpload = Boolean(file && apiUrl && !uploading);
+  const isProcessing =
+    Boolean(result) && !TERMINAL_STATUSES.includes(result?.status ?? '');
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    setFile(event.target.files?.[0] ?? null);
+    setDocumentId(null);
+    setResult(null);
+    setError(null);
+  }
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+
+    if (!file) {
+      return;
+    }
+
+    if (!apiUrl) {
+      setError('NEXT_PUBLIC_API_URL is not configured.');
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+    setResult(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch(`${apiUrl}/documents`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+
+        throw new Error(data.message ?? 'Upload failed');
+      }
+
+      const document = await response.json();
+      setDocumentId(document.id);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!documentId || !apiUrl) {
+      return;
+    }
+
+    let active = true;
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    const poll = async () => {
+      try {
+        const response = await fetch(`${apiUrl}/documents/${documentId}`);
+
+        if (!response.ok) {
+          throw new Error('Failed to load document');
+        }
+
+        const data: DocumentResult = await response.json();
+
+        if (!active) {
+          return;
+        }
+
+        setResult(data);
+
+        if (!TERMINAL_STATUSES.includes(data.status)) {
+          timeoutId = setTimeout(poll, 1000);
+        }
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        setError(
+          error instanceof Error ? error.message : 'Failed to load result',
+        );
+      }
+    };
+
+    void poll();
+
+    return () => {
+      active = false;
+      clearTimeout(timeoutId);
+    };
+  }, [documentId, apiUrl]);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className="min-h-screen bg-[#f7f4ef] text-slate-950">
+      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
+        <header className="grid gap-5 border-b border-slate-200 pb-6 lg:grid-cols-[1fr_auto] lg:items-end">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-teal-700">
+              FinanceAudit
+            </p>
+            <h1 className="mt-3 max-w-3xl text-4xl font-semibold leading-tight text-slate-950 sm:text-5xl">
+              Review invoice totals with less guesswork.
+            </h1>
+            <p className="mt-4 max-w-2xl text-base leading-7 text-slate-600">
+              Upload a PDF invoice, then review extracted fields, totals, line
+              items, and audit findings in one calm workspace.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
+            <Metric label="Files" value={result ? '1' : '0'} />
+            <Metric label="Issues" value={getIssueCount(result)} />
+            <Metric label="Status" value={result ? formatStatus(result.status) : 'Ready'} />
+          </div>
+        </header>
+
+        <div className="grid flex-1 gap-6 lg:grid-cols-[380px_1fr]">
+          <aside className="space-y-4">
+            <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold">New audit</h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                    PDF invoices only
+                  </p>
+                </div>
+                <span className="rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-700">
+                  AI + rules
+                </span>
+              </div>
+
+              <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+                <label className="flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center transition hover:border-teal-500 hover:bg-teal-50/60">
+                  <span className="text-sm font-semibold text-slate-800">
+                    {file ? file.name : 'Choose invoice PDF'}
+                  </span>
+                  <span className="mt-1 text-xs text-slate-500">
+                    {file ? formatFileSize(file.size) : 'No file selected'}
+                  </span>
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    onChange={handleFileChange}
+                    className="sr-only"
+                  />
+                </label>
+
+                <button
+                  type="submit"
+                  disabled={!canUpload}
+                  className="flex h-11 w-full items-center justify-center rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+                >
+                  {uploading ? 'Uploading...' : 'Run audit'}
+                </button>
+              </form>
+
+              {!apiUrl && (
+                <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900">
+                  Set NEXT_PUBLIC_API_URL before running an audit.
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="text-lg font-semibold">Document</h2>
+              {result ? (
+                <div className="mt-4 space-y-4">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-slate-900">
+                      {result.filename}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      ID {result.id}
+                    </p>
+                  </div>
+                  <StatusBadge status={result.status} />
+                  {isProcessing && (
+                    <div className="rounded-lg bg-sky-50 p-3 text-sm text-sky-800">
+                      Processing now
+                    </div>
+                  )}
+                  {result.errorMessage && (
+                    <div className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700">
+                      {result.errorMessage}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <EmptyState title="No invoice yet" body="Your audit result will appear here." />
+              )}
+            </section>
+          </aside>
+
+          <section className="min-h-[520px] rounded-lg border border-slate-200 bg-white shadow-sm">
+            {error && (
+              <div className="border-b border-rose-100 bg-rose-50 px-5 py-4 text-sm font-medium text-rose-700">
+                {error}
+              </div>
+            )}
+
+            {result?.invoice ? (
+              <InvoiceResult result={result} />
+            ) : (
+              <div className="flex min-h-[520px] items-center justify-center px-6">
+                <EmptyState
+                  title={uploading ? 'Uploading invoice' : 'Ready when you are'}
+                  body={
+                    uploading
+                      ? 'FinanceAudit is sending the PDF to the audit service.'
+                      : 'Select an invoice PDF to start the review.'
+                  }
+                />
+              </div>
+            )}
+          </section>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+      </div>
+    </main>
+  );
+}
+
+function InvoiceResult({ result }: { result: DocumentResult }) {
+  const invoice = result.invoice!;
+  const findings = invoice.audit?.findings ?? [];
+  const totals = useMemo(
+    () => [
+      ['Subtotal', invoice.subtotal],
+      ['Tax', invoice.tax],
+      ['Total', invoice.total],
+    ],
+    [invoice.subtotal, invoice.tax, invoice.total],
+  );
+
+  return (
+    <div className="divide-y divide-slate-200">
+      <section className="p-5 sm:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.16em] text-teal-700">
+              Invoice
+            </p>
+            <h2 className="mt-2 text-2xl font-semibold text-slate-950">
+              {invoice.vendorName ?? 'Unknown vendor'}
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              {invoice.invoiceNumber ?? 'No invoice number'}
+            </p>
+          </div>
+          {invoice.audit && <StatusBadge status={invoice.audit.status} />}
         </div>
-      </main>
+
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Field label="Customer" value={invoice.customerName} />
+          <Field label="Currency" value={invoice.currency} />
+          <Field label="Line items" value={String(invoice.lineItems.length)} />
+          <Field label="Findings" value={String(findings.length)} />
+        </div>
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          {totals.map(([label, value]) => (
+            <div key={label} className="rounded-lg border border-slate-200 p-4">
+              <p className="text-sm text-slate-500">{label}</p>
+              <p className="mt-2 text-2xl font-semibold text-slate-950">
+                {value ?? '-'}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="p-5 sm:p-6">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-lg font-semibold">Line items</h2>
+          <span className="text-sm text-slate-500">
+            {invoice.lineItems.length} rows
+          </span>
+        </div>
+
+        {invoice.lineItems.length > 0 ? (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[640px] border-separate border-spacing-0 text-left text-sm">
+              <thead>
+                <tr className="text-slate-500">
+                  <th className="border-b border-slate-200 py-3 pr-4 font-medium">
+                    Description
+                  </th>
+                  <th className="border-b border-slate-200 px-4 py-3 font-medium">
+                    Qty
+                  </th>
+                  <th className="border-b border-slate-200 px-4 py-3 font-medium">
+                    Unit price
+                  </th>
+                  <th className="border-b border-slate-200 py-3 pl-4 text-right font-medium">
+                    Total
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoice.lineItems.map((item) => (
+                  <tr key={item.id} className="align-top">
+                    <td className="border-b border-slate-100 py-4 pr-4 font-medium text-slate-900">
+                      {item.description}
+                    </td>
+                    <td className="border-b border-slate-100 px-4 py-4 text-slate-600">
+                      {item.quantity ?? '-'}
+                    </td>
+                    <td className="border-b border-slate-100 px-4 py-4 text-slate-600">
+                      {item.unitPrice ?? '-'}
+                    </td>
+                    <td className="border-b border-slate-100 py-4 pl-4 text-right font-medium text-slate-900">
+                      {item.total ?? '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState title="No line items found" body="The invoice was extracted without row-level items." />
+        )}
+      </section>
+
+      <section className="p-5 sm:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-lg font-semibold">Audit findings</h2>
+          {invoice.audit && <StatusBadge status={invoice.audit.status} />}
+        </div>
+
+        {findings.length === 0 ? (
+          <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-700">
+            No findings. Totals and rules look good.
+          </div>
+        ) : (
+          <div className="mt-4 grid gap-3">
+            {findings.map((finding) => (
+              <article
+                key={finding.id}
+                className="rounded-lg border border-slate-200 p-4"
+              >
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h3 className="font-semibold text-slate-950">
+                      {formatStatus(finding.type)}
+                    </h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      {finding.message}
+                    </p>
+                  </div>
+                  <SeverityBadge severity={finding.severity} />
+                </div>
+
+                {(finding.expectedValue || finding.actualValue) && (
+                  <div className="mt-4 grid gap-3 rounded-lg bg-slate-50 p-3 text-sm sm:grid-cols-2">
+                    <Field label="Expected" value={finding.expectedValue} />
+                    <Field label="Actual" value={finding.actualValue} />
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  return (
+    <span
+      className={`inline-flex w-fit items-center rounded-full border px-3 py-1 text-xs font-semibold ${STATUS_STYLES[status] ?? 'border-slate-200 bg-slate-50 text-slate-600'}`}
+    >
+      {formatStatus(status)}
+    </span>
+  );
+}
+
+function SeverityBadge({ severity }: { severity: string }) {
+  return (
+    <span
+      className={`inline-flex w-fit items-center rounded-full border px-3 py-1 text-xs font-semibold ${SEVERITY_STYLES[severity] ?? 'border-slate-200 bg-slate-50 text-slate-600'}`}
+    >
+      {formatStatus(severity)}
+    </span>
+  );
+}
+
+function Field({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | null | undefined;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="text-xs font-medium uppercase tracking-[0.12em] text-slate-500">
+        {label}
+      </p>
+      <p className="mt-1 break-words font-medium text-slate-950">
+        {value ?? '-'}
+      </p>
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-md px-3 py-2">
+      <p className="text-xs font-medium text-slate-500">{label}</p>
+      <p className="mt-1 truncate text-sm font-semibold text-slate-950">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function EmptyState({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="mx-auto max-w-sm text-center">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-teal-50 text-lg font-semibold text-teal-700">
+        FA
+      </div>
+      <h2 className="mt-4 text-lg font-semibold text-slate-950">{title}</h2>
+      <p className="mt-2 text-sm leading-6 text-slate-500">{body}</p>
+    </div>
+  );
+}
+
+function getIssueCount(result: DocumentResult | null) {
+  return String(result?.invoice?.audit?.findings.length ?? 0);
+}
+
+function formatStatus(status: string) {
+  return status
+    .toLowerCase()
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function formatFileSize(size: number) {
+  if (size < 1024 * 1024) {
+    return `${Math.max(1, Math.round(size / 1024))} KB`;
+  }
+
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }

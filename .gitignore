@@ -19,10 +19,20 @@
 
 # production
 /build
+/dist
 
 # misc
 .DS_Store
+Thumbs.db
 *.pem
+*.key
+*.crt
+*.p12
+*.pfx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
 
 # debug
 npm-debug.log*
@@ -30,11 +40,26 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files
 .env*
+!.env.example
+
+# local credentials and secret dumps
+.aws/
+.azure/
+.gcloud/
+.npmrc
+*.secret
+*.secrets
+secrets.*
+credentials.*
+service-account*.json
 
 # vercel
 .vercel
+
+# docker
+docker-compose.override.yml
 
 # typescript
 *.tsbuildinfo

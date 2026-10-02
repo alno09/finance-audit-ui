@@ -1,6 +1,14 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# FinanceAudit
 
-## Getting Started
+FinanceAudit is a Next.js UI for uploading invoice PDFs and reviewing extracted
+financial data, line items, and audit findings.
+
+If you want to understand the architecture, visit this repo:
+[https://github.com/alno09/finance-audit-engine](https://github.com/alno09/finance-audit-engine).
+
+Since you are here, here's how you can run it.
+
+## Run Locally
 
 First, run the development server:
 
@@ -14,23 +22,20 @@ pnpm dev
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3001](http://localhost:3001) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Set the API URL before auditing a document:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:3000 npm run dev
+```
 
-## Learn More
+## Docker
 
-To learn more about Next.js, take a look at the following resources:
+Build and run the production container with Compose:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:3000 docker compose up --build
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The UI will be available at [http://localhost:3001](http://localhost:3001), with the backend API at [http://localhost:3000](http://localhost:3000).
